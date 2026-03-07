@@ -199,10 +199,7 @@ function UILib.togglePill(parent, initial, onChanged)
     btn.Parent          = parent
     UILib.addCorner(btn, 999)
 
-    -- initial can be a boolean OR a getter function () -> boolean
-    -- If a getter is provided, clicks always read the live value from it first
-    local getter = type(initial) == "function" and initial or nil
-    local state  = getter and (getter() and true or false) or (initial and true or false)
+    local state = initial and true or false
     local function sync()
         btn.Text             = state and "ON  " or "OFF  "
         btn.BackgroundColor3 = state and Color3.fromRGB(0, 195, 85) or Color3.fromRGB(55, 58, 78)
@@ -211,8 +208,6 @@ function UILib.togglePill(parent, initial, onChanged)
     sync()
 
     btn.MouseButton1Click:Connect(function()
-        -- always read the live source of truth before toggling
-        if getter then state = getter() end
         state = not state
         sync()
         if onChanged then onChanged(state) end
@@ -480,7 +475,7 @@ function UILib.keybindToggleRow(title, getKey, setKey, getToggle, setToggle, onT
         _keyCapture.label  = keyLbl
         keyLbl.Text        = "..."
     end)
-    local _, sync = UILib.togglePill(r, getToggle, function(v)
+    local _, sync = UILib.togglePill(r, getToggle(), function(v)
         setToggle(v)
         if onToggle then onToggle(v) end
     end)

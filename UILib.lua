@@ -65,6 +65,12 @@ function UILib.init(cfg, content, ScreenGui, services)
     _scheduleSave = services.scheduleSave or function() end
     _keyCapture   = services.keyCapture   or { active = false }
     _keybinds     = services.keybinds     or {}
+
+    -- Close the color picker popup whenever the main content area is scrolled
+    content:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+        UILib.closeColorPicker()
+    end)
+
     return UILib
 end
 
@@ -1252,12 +1258,18 @@ end
 -- ════════════════════════════════════════════════════════════════════
 
 -- Track the currently open color picker so only one is open at a time.
-local _openColorPicker = nil
--- Closes whatever color picker popup is currently open (called on tab switch)
+local _openColorPicker     = nil
+local _openColorPickerFade = nil  -- the popupFade frame for the open picker
+local _openColorPickerClose = nil -- the closePopup function for the open picker
+-- Closes whatever color picker popup is currently open with a fade (called on tab switch / scroll)
 function UILib.closeColorPicker()
     if _openColorPicker then
-        _openColorPicker.Visible = false
-        _openColorPicker = nil
+        if _openColorPickerClose then
+            _openColorPickerClose()
+        else
+            _openColorPicker.Visible = false
+            _openColorPicker = nil
+        end
     end
 end
 
@@ -1671,7 +1683,9 @@ function UILib.createColorRow(labelText, initColor, onChange)
             popupFade.BackgroundTransparency = 1  -- reset for next open
         end)
         if _openColorPicker == popup then
-            _openColorPicker = nil
+            _openColorPicker      = nil
+            _openColorPickerFade  = nil
+            _openColorPickerClose = nil
         end
     end
 
@@ -1679,21 +1693,26 @@ function UILib.createColorRow(labelText, initColor, onChange)
         -- Close any other open picker instantly
         if _openColorPicker and _openColorPicker ~= popup then
             _openColorPicker.Visible = false
+            _openColorPickerFade  = nil
+            _openColorPickerClose = nil
         end
-        _openColorPicker = popup
+        _openColorPicker      = popup
+        _openColorPickerClose = closePopup
         isOpen = true
 
-        -- Position popup, starting 20px above final position (millenium slide-in)
+        -- Position popup below swatch, flip above if too close to bottom
         local absPos  = swatchBtn.AbsolutePosition
         local absSize = swatchBtn.AbsoluteSize
         local sx      = _ScreenGui.AbsoluteSize.X
-        local sy      = _ScreenGui.AbsoluteSize.Y
+        -- Use camera viewport height as the true usable area (excludes taskbar)
+        local sy      = workspace.CurrentCamera.ViewportSize.Y
 
         local px = math.clamp(absPos.X - POPUP_W + absSize.X - 50, 4, sx - POPUP_W - 4)
-        local py = absPos.Y + absSize.Y + 20
-        if py + POPUP_H > sy - 4 then
+        local py = absPos.Y + absSize.Y + 4
+        if py + POPUP_H > sy - 8 then
             py = absPos.Y - POPUP_H - 4
         end
+        py = math.max(4, py)
 
         -- Start 20px above, fade covering — matching millenium exactly
         popupFade.BackgroundTransparency = 0

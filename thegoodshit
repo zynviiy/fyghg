@@ -1,10 +1,9 @@
-if getgenv().__antispy_loaded then return end
-getgenv().__antispy_loaded = true
+if getgenv().__antispy_loaded == nil then
+    getgenv().__antispy_loaded = false
+end
 
 local HttpService = game:GetService("HttpService")
-
 local detected = false
-
 local ts = game:GetService("TweenService")
 
 function log(msg)
@@ -250,84 +249,86 @@ end
 
 cleanupSpyData()
 
-task.spawn(function()
-    while task.wait(3) do
-        cleanupSpyData()
+-- only install hooks once
+if not getgenv().__antispy_loaded then
+    getgenv().__antispy_loaded = true
+
+    task.spawn(function()
+        while task.wait(3) do
+            cleanupSpyData()
+        end
+    end)
+
+    local ncHandler = newcclosure(function(self,...)
+        local method = getnamecallmethod()
+        if HTTP_METHODS[method] and originals[method] then
+            return originals[method](self,...)
+        end
+        if originalNc then
+            return originalNc(self,...)
+        end
+    end)
+
+    -- hook via hookmetamethod
+    pcall(function() realHookMetamethod(game,"__namecall",ncHandler) end)
+
+    -- also write directly to rawmetatable, bypassing hookmetamethod entirely
+    pcall(function()
+        local mt = getrawmetatable(game)
+        setreadonly(mt,false)
+        mt.__namecall = ncHandler
+        setreadonly(mt,true)
+    end)
+
+    function restoreAll()
+        log("Restoring original functions...")
+        pcall(function() if originals.HttpGet then realHookFunction(game.HttpGet,originals.HttpGet) end end)
+        pcall(function() if originals.HttpPost then realHookFunction(game.HttpPost,originals.HttpPost) end end)
+        pcall(function() if originals.GetAsync then realHookFunction(HttpService.GetAsync,originals.GetAsync) end end)
+        pcall(function() if originals.PostAsync then realHookFunction(HttpService.PostAsync,originals.PostAsync) end end)
+        pcall(function() if originals.RequestAsync then realHookFunction(HttpService.RequestAsync,originals.RequestAsync) end end)
+        pcall(function() if originals.request and request then realHookFunction(request,originals.request) end end)
+        pcall(function() if originals.http_request and http_request then realHookFunction(http_request,originals.http_request) end end)
+        pcall(function() if originals.http_dot_request and http and http.request then realHookFunction(http.request,originals.http_dot_request) end end)
+        pcall(function() if originals.syn_request and syn and syn.request then realHookFunction(syn.request,originals.syn_request) end end)
+        log("All functions restored.")
     end
-end)
 
-local ncHandler = newcclosure(function(self,...)
-    local method = getnamecallmethod()
-    if HTTP_METHODS[method] and originals[method] then
-        return originals[method](self,...)
+    function isProtectedFunction(fn)
+        if not fn or type(fn) ~= "function" then return false end
+        if fn == game.HttpGet or fn == game.HttpPost then return true end
+        if fn == HttpService.GetAsync or fn == HttpService.PostAsync or fn == HttpService.RequestAsync then return true end
+        if request and fn == request then return true end
+        if http_request and fn == http_request then return true end
+        if http and http.request and fn == http.request then return true end
+        if syn and syn.request and fn == syn.request then return true end
+        return false
     end
-    if originalNc then
-        return originalNc(self,...)
-    end
-end)
 
--- hook via hookmetamethod
-pcall(function() realHookMetamethod(game,"__namecall",ncHandler) end)
+    realHookFunction(hookfunction,newcclosure(function(target,hook)
+        if isProtectedFunction(target) then
+            log("BLOCKED hookfunction attempt on HTTP function")
+            detected = true
+            punishment()
+            return target
+        end
+        return realHookFunction(target,hook)
+    end))
 
--- also write directly to rawmetatable, bypassing hookmetamethod entirely
-pcall(function()
-    local mt = getrawmetatable(game)
-    setreadonly(mt,false)
-    mt.__namecall = ncHandler
-    setreadonly(mt,true)
-end)
-
-function restoreAll()
-    log("Restoring original functions...")
-
-    pcall(function() if originals.HttpGet then realHookFunction(game.HttpGet,originals.HttpGet) end end)
-    pcall(function() if originals.HttpPost then realHookFunction(game.HttpPost,originals.HttpPost) end end)
-    pcall(function() if originals.GetAsync then realHookFunction(HttpService.GetAsync,originals.GetAsync) end end)
-    pcall(function() if originals.PostAsync then realHookFunction(HttpService.PostAsync,originals.PostAsync) end end)
-    pcall(function() if originals.RequestAsync then realHookFunction(HttpService.RequestAsync,originals.RequestAsync) end end)
-
-    pcall(function() if originals.request and request then realHookFunction(request,originals.request) end end)
-    pcall(function() if originals.http_request and http_request then realHookFunction(http_request,originals.http_request) end end)
-    pcall(function() if originals.http_dot_request and http and http.request then realHookFunction(http.request,originals.http_dot_request) end end)
-    pcall(function() if originals.syn_request and syn and syn.request then realHookFunction(syn.request,originals.syn_request) end end)
-
-    log("All functions restored.")
+    realHookFunction(hookmetamethod,newcclosure(function(obj,method,hook)
+        if obj == game and method == "__namecall" and type(hook) == "function" then
+            local actualHook = hook
+            return realHookMetamethod(obj,method,newcclosure(function(self,...)
+                local m = getnamecallmethod()
+                if HTTP_METHODS[m] and originals[m] then
+                    return originals[m](self,...)
+                end
+                return actualHook(self,...)
+            end))
+        end
+        return realHookMetamethod(obj,method,hook)
+    end))
 end
-
-function isProtectedFunction(fn)
-    if not fn or type(fn) ~= "function" then return false end
-    if fn == game.HttpGet or fn == game.HttpPost then return true end
-    if fn == HttpService.GetAsync or fn == HttpService.PostAsync or fn == HttpService.RequestAsync then return true end
-    if request and fn == request then return true end
-    if http_request and fn == http_request then return true end
-    if http and http.request and fn == http.request then return true end
-    if syn and syn.request and fn == syn.request then return true end
-    return false
-end
-
-realHookFunction(hookfunction,newcclosure(function(target,hook)
-    if isProtectedFunction(target) then
-        log("BLOCKED hookfunction attempt on HTTP function")
-        detected = true
-        punishment()
-        return target
-    end
-    return realHookFunction(target,hook)
-end))
-
-realHookFunction(hookmetamethod,newcclosure(function(obj,method,hook)
-    if obj == game and method == "__namecall" and type(hook) == "function" then
-        local actualHook = hook
-        return realHookMetamethod(obj,method,newcclosure(function(self,...)
-            local m = getnamecallmethod()
-            if HTTP_METHODS[m] and originals[m] then
-                return originals[m](self,...)
-            end
-            return actualHook(self,...)
-        end))
-    end
-    return realHookMetamethod(obj,method,hook)
-end))
 
 local safeRequestFn = originals.request or originals.http_request or originals.syn_request or originals.http_dot_request
 

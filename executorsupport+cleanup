@@ -1,0 +1,150 @@
+-- ══════════════════════════════════════════════════════════════════════
+-- EXECUTOR COMPAT SHIM
+-- Stubs out every executor-only API that Massacreme uses so the script
+-- loads cleanly on executors that don't support them (e.g. Fluxus mobile,
+-- some Android executors). Anti-spy and hook features simply become no-ops;
+-- all gameplay features continue to work normally.
+-- ══════════════════════════════════════════════════════════════════════
+do
+    -- Lua identity function — returned for hookfunction/hookmetamethod stubs
+    -- so callers that store the return value don't get nil.
+    local function _id(...) return ... end
+    local function _noop(...) end
+    local function _false(...) return false end
+    local function _true(...)  return true  end
+    local function _nil(...)   return nil   end
+    local function _emptyTbl() return {}    end
+
+    -- getgenv: fallback to _G if missing (some sandboxed executors)
+    if not getgenv then
+        getgenv = function() return _G end
+    end
+
+    -- Closure type checks — safe stubs always return false (conservative)
+    if not islclosure        then islclosure        = _false    end
+    if not iscclosure        then iscclosure        = _false    end
+    if not isourclosure      then isourclosure      = _false    end
+
+    -- clonefunction — just return the function itself if not supported
+    if not clonefunction     then clonefunction     = _id       end
+
+    -- newcclosure — return a plain Lua wrapper if not supported
+    if not newcclosure       then newcclosure       = _id       end
+
+    -- hookfunction — no-op; return the original so callers stay intact
+    if not hookfunction      then hookfunction      = function(orig, hook) return orig end end
+
+    -- hookmetamethod — no-op; return the previous handler (nil here)
+    if not hookmetamethod    then hookmetamethod    = function(obj, method, hook) return nil end end
+
+    -- getrawmetatable — fall back to getmetatable
+    if not getrawmetatable   then getrawmetatable   = getmetatable end
+
+    -- setreadonly — no-op if missing
+    if not setreadonly       then setreadonly       = _noop     end
+
+    -- getnamecallmethod — return empty string so method checks just fail gracefully
+    if not getnamecallmethod then getnamecallmethod = function() return "" end end
+
+    -- getgc — return empty table so iteration is safe
+    if not getgc             then getgc             = _emptyTbl end
+
+    -- getupvalues / getupvalue — return empty table / nil
+    if not getupvalues       then getupvalues       = _emptyTbl end
+    if not getupvalue        then getupvalue        = _nil      end
+
+    -- getoriginalfunction — just return the function itself
+    if not getoriginalfunction then getoriginalfunction = _id  end
+
+    -- request / http_request — try to surface HttpService:RequestAsync as a
+    -- fallback so safePost/safeGet still work on executors with no request global
+    if not request and not http_request and not (syn and syn.request) and not (http and http.request) then
+        local _HS = game:GetService("HttpService")
+        local ok, fn = pcall(function()
+            return function(opts)
+                local resp = _HS:RequestAsync(opts)
+                return resp
+            end
+        end)
+        if ok and fn then
+            request = fn
+        end
+    end
+
+    -- Drawing — stub the whole namespace if missing so ESP cleanup doesn't crash
+    if not Drawing then
+        Drawing = { new = function() return setmetatable({},{__index=function() return function() end end, __newindex=function() end}) end }
+    end
+
+    -- identifyexecutor / getexecutorname — return "Unknown" if missing
+    if not identifyexecutor  then identifyexecutor  = function() return "Unknown" end end
+    if not getexecutorname   then getexecutorname   = function() return "Unknown" end end
+end
+
+-- ══════════════════════════════════════════════════════════════════════
+-- RE-EXECUTION CLEANUP
+-- Destroys all GUIs and disconnects all connections from the previous run
+-- so re-executing the script doesn't stack duplicate loops or break the
+-- character. Safe to run on first execution (all pcalls, no-op if clean).
+-- ══════════════════════════════════════════════════════════════════════
+do
+    -- 1. Destroy all owned GUIs by name
+    local GUI_NAMES = {
+        "MP_Loader",         -- key screen
+        "Massacreme_UILib",  -- main panel (CoreGui)
+        "Massacreme_FAB",    -- mobile floating button
+        "Massacreme_Quickbar", -- mobile quickbar
+        "_MasaHitNotif",     -- hit notification panel
+        "MP_TargetHUD",      -- target info HUD
+        "_MasacreCMDS",      -- CMDS panel (if open)
+        "_MasacrePanel",     -- player panel (if open)
+    }
+    local function destroyGuiByName(name)
+        pcall(function()
+            local cg = game:GetService("CoreGui")
+            for _, g in ipairs(cg:GetChildren()) do
+                if g.Name == name then g:Destroy() end
+            end
+        end)
+        pcall(function()
+            local pg = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if pg then
+                for _, g in ipairs(pg:GetChildren()) do
+                    if g.Name == name then g:Destroy() end
+                end
+            end
+        end)
+    end
+    for _, n in ipairs(GUI_NAMES) do destroyGuiByName(n) end
+
+    -- 2. Disconnect all RunService / UIS connections stored from last run
+    local prevConns = getgenv().__massacreme_conns
+    if prevConns then
+        for _, c in ipairs(prevConns) do
+            pcall(function() c:Disconnect() end)
+        end
+    end
+    getgenv().__massacreme_conns = {}
+
+    -- 3. Reset anti-spy so it reinstalls its namecall handler cleanly
+    getgenv().__antispy_loaded = nil
+
+    -- 4. Clear Drawing objects left over from ESP / silent aim
+    pcall(function()
+        if Drawing and Drawing.new then
+            -- getgc-scan for Drawing objects owned by us
+            local ok, gc = pcall(getgc)
+            if ok and type(gc) == "table" then
+                for _, v in next, gc do
+                    if type(v) == "userdata" then
+                        pcall(function() v.Visible = false; v:Remove() end)
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 5. Small yield so Roblox can fully garbage-collect destroyed instances
+    --    before we start creating new ones. task.wait(0) is enough.
+    task.wait(0)
+end

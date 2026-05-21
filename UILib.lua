@@ -1247,6 +1247,16 @@ function UILib.makeDraggable(window, handle, dragSpeed)
         end
     end)
 
+    -- Safety net: some executors/emulators don't fire inp.Changed reliably,
+    -- so also stop dragging on any global InputEnded for the same input type.
+    _UIS.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging  = false
+            activeInp = nil
+        end
+    end)
+
     -- Per-frame update: lerp window toward goal
     game:GetService("RunService").Heartbeat:Connect(function(dt)
         if not startPos then return end

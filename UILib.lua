@@ -1195,63 +1195,118 @@ end
 -- Makes any Frame draggable by an attached header.
 -- ════════════════════════════════════════════════════════════════════
 
---- Makes any Frame draggable by its handle (header).
+--- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
+--- The window glides toward the cursor with momentum and settles smoothly on release.
 ---@param window    Frame
 ---@param handle    GuiObject
----@param dragSpeed number|nil   (legacy, ignored)
----@param isMobile  boolean|nil  (legacy, ignored)
+---@param dragSpeed number|nil  lerp speed multiplier (default 8)
+--- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
+--- Pass isMobile=true to switch to fully offset-based positioning (no scale anchor) and
+--- clamp the panel so it can't be dragged off-screen.
 function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
-    if not window or not handle then return end
+    local DRAG_SPEED   = dragSpeed or 8
+    local dragging     = false
+    local startPos     = nil   -- window.Position at drag start (always offset after conversion)
+    local startMouse   = nil   -- pointer position at drag start
+    local activeInp    = nil   -- the specific InputObject we are tracking
+    local lastGoalPos  = nil   -- last computed goal UDim2
 
-    local dragging = false
-    local startPos = nil
-    local startMouse = nil
+    local function lerp(a, b, m) return a + (b - a) * m end
+
+    local function getInputPos()
+        if activeInp then
+            return Vector2.new(activeInp.Position.X, activeInp.Position.Y)
+        end
+        return _UIS:GetMouseLocation()
+    end
+
+    -- Clamp offset so the panel stays on screen (at least 20px visible on each edge).
+    local function clampGoal(xOff, yOff)
+        if not isMobile then return xOff, yOff end
+        local vp  = game:GetService("Workspace").CurrentCamera.ViewportSize
+        local w   = window.AbsoluteSize.X
+        local h   = window.AbsoluteSize.Y
+        local pad = 20
+        -- On mobile window has AnchorPoint (0.5, 0) so offset is relative to center-top
+        xOff = math.clamp(xOff, -(vp.X / 2 - pad), vp.X / 2 - pad)
+        yOff = math.clamp(yOff, pad, vp.Y - h - pad)
+        return xOff, yOff
+    end
 
     handle.InputBegan:Connect(function(inp)
-        if inp.UserInputType ~= Enum.UserInputType.MouseButton1 
-           and inp.UserInputType ~= Enum.UserInputType.Touch then 
-            return 
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            -- Guard: ensure the input started within the header's own bounds.
+            -- Prevents scroll events from children bubbling up and starting a drag.
+            local ap  = handle.AbsolutePosition
+            local as_ = handle.AbsoluteSize
+            local tx, ty = inp.Position.X, inp.Position.Y
+            if tx < ap.X or tx > ap.X + as_.X or ty < ap.Y or ty > ap.Y + as_.Y then
+                return
+            end
+
+            -- On mobile the panel uses a scale+offset anchor (0.5, 0) for centering.
+            -- Convert to a pure offset position before dragging so the lerp maths work.
+            if isMobile then
+                local abs = window.AbsolutePosition
+                window.AnchorPoint = Vector2.new(0, 0)
+                window.Position    = UDim2.fromOffset(abs.X, abs.Y)
+            end
+
+            dragging    = true
+            activeInp   = inp
+            startPos    = window.Position
+            startMouse  = Vector2.new(inp.Position.X, inp.Position.Y)
+            lastGoalPos = nil
+            inp.Changed:Connect(function()
+                if inp.UserInputState == Enum.UserInputState.End then
+                    dragging  = false
+                    activeInp = nil
+                end
+            end)
         end
+    end)
 
-        -- Safety bounds check
-        local ap = handle.AbsolutePosition
-        local as = handle.AbsoluteSize
-        local pos = inp.Position
+    -- Safety net: some executors/emulators don't fire inp.Changed reliably.
+    _UIS.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging  = false
+            activeInp = nil
+        end
+    end)
 
-        if not pos or pos.X < ap.X or pos.X > ap.X + as.X 
-        or pos.Y < ap.Y or pos.Y > ap.Y + as.Y then
+    -- Per-frame update: lerp window toward goal
+    game:GetService("RunService").Heartbeat:Connect(function(dt)
+        if not startPos then return end
+
+        if not dragging and lastGoalPos then
+            local newX = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
+            local newY = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
+            if math.abs(newX - lastGoalPos.X.Offset) < 0.5 and math.abs(newY - lastGoalPos.Y.Offset) < 0.5 then
+                window.Position = lastGoalPos
+                lastGoalPos     = nil
+                startPos        = nil
+                startMouse      = nil
+            else
+                window.Position = UDim2.new(0, newX, 0, newY)
+            end
             return
         end
 
-        dragging = true
-        startPos = window.Position
-        startMouse = Vector2.new(pos.X, pos.Y)
-    end)
-
-    _UIS.InputChanged:Connect(function(inp)
-        if not dragging then return end
-        if not inp.Position then return end
-
-        if inp.UserInputType ~= Enum.UserInputType.MouseMovement 
-           and inp.UserInputType ~= Enum.UserInputType.Touch then 
-            return 
-        end
-
-        local currentPos = inp.Position
-        local delta = currentPos - startMouse
-
-        window.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-    end)
-
-    _UIS.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 
-        or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+        if dragging and startMouse then
+            local curPos        = getInputPos()
+            local xGoal, yGoal  = clampGoal(
+                startPos.X.Offset + (curPos.X - startMouse.X),
+                startPos.Y.Offset + (curPos.Y - startMouse.Y)
+            )
+            lastGoalPos  = UDim2.new(0, xGoal, 0, yGoal)
+            window.Position = UDim2.new(
+                0,
+                lerp(window.Position.X.Offset, xGoal, dt * DRAG_SPEED),
+                0,
+                lerp(window.Position.Y.Offset, yGoal, dt * DRAG_SPEED)
+            )
         end
     end)
 end

@@ -496,7 +496,7 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     wrap.Name = labelText:gsub("[^%w]", "_")
     wrap.BackgroundColor3 = _cfg.BG2
     wrap.BorderSizePixel  = 0
-    wrap.Size             = UDim2.new(1, 0, 0, 58)
+    wrap.Size             = UDim2.new(1, 0, 0, 68)
     wrap.Parent           = _content
     UILib.addCorner(wrap, 8)
     UILib.addStroke(wrap, 1, _cfg.Stroke, 0.5)
@@ -571,15 +571,20 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     end
 
     track.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
             dragging = true; fromX(inp.Position.X)
         end
     end)
     track.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
     end)
     _UIS.InputChanged:Connect(function(inp)
-        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
+        or inp.UserInputType == Enum.UserInputType.Touch) then
             fromX(inp.Position.X)
         end
     end)

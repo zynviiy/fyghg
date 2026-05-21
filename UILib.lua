@@ -496,7 +496,7 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     wrap.Name = labelText:gsub("[^%w]", "_")
     wrap.BackgroundColor3 = _cfg.BG2
     wrap.BorderSizePixel  = 0
-    wrap.Size             = UDim2.new(1, 0, 0, 58)
+    wrap.Size             = UDim2.new(1, 0, 0, 68)  -- +10px taller for mobile touch target
     wrap.Parent           = _content
     UILib.addCorner(wrap, 8)
     UILib.addStroke(wrap, 1, _cfg.Stroke, 0.5)
@@ -518,7 +518,7 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     local track            = Instance.new("Frame")
     track.Name = "Track"
     track.Size             = UDim2.new(1, -24, 0, 10)
-    track.Position         = UDim2.new(0, 12, 0, 38)
+    track.Position         = UDim2.new(0, 12, 0, 43)  -- shifted down to stay centred in taller wrap
     track.BackgroundColor3 = _cfg.BG3
     track.BorderSizePixel  = 0
     track.Parent           = wrap
@@ -543,6 +543,17 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     knob.Parent             = track
     UILib.addCorner(knob, 999)
     UILib.addStroke(knob, 1, _cfg.Accent, 0.2)
+
+    -- Invisible oversized touch target (44px tall — standard mobile tap target size)
+    local touchTarget              = Instance.new("TextButton")
+    touchTarget.Name               = "TouchTarget"
+    touchTarget.Size               = UDim2.new(1, 0, 0, 44)
+    touchTarget.Position           = UDim2.new(0, 0, 0.5, -22)
+    touchTarget.BackgroundTransparency = 1
+    touchTarget.Text               = ""
+    touchTarget.AutoButtonColor    = false
+    touchTarget.ZIndex             = track.ZIndex + 2
+    touchTarget.Parent             = track
 
     local dragging = false
     local cur      = defV
@@ -570,17 +581,44 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
         setVal(minV + (rel / track.AbsoluteSize.X) * (maxV - minV))
     end
 
-    track.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true; fromX(inp.Position.X)
+    local function startDrag(x)
+        dragging = true
+        if _content then _content.ScrollingEnabled = false end
+        fromX(x)
+    end
+
+    local function stopDrag()
+        dragging = false
+        if _content then _content.ScrollingEnabled = true end
+    end
+
+    -- Wire up both the track and the oversized touch target
+    for _, target in ipairs({ track, touchTarget }) do
+        target.InputBegan:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+                startDrag(inp.Position.X)
+            end
+        end)
+        target.InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+                stopDrag()
+            end
+        end)
+    end
+
+    _UIS.InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
+        or inp.UserInputType == Enum.UserInputType.Touch) then
+            fromX(inp.Position.X)
         end
     end)
-    track.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-    end)
-    _UIS.InputChanged:Connect(function(inp)
-        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
-            fromX(inp.Position.X)
+
+    -- Safety net: finger lifted anywhere outside the track also ends the drag
+    _UIS.InputEnded:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.Touch then
+            stopDrag()
         end
     end)
 

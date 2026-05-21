@@ -496,7 +496,7 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     wrap.Name = labelText:gsub("[^%w]", "_")
     wrap.BackgroundColor3 = _cfg.BG2
     wrap.BorderSizePixel  = 0
-    wrap.Size             = UDim2.new(1, 0, 0, 68)  -- +10px taller for mobile touch target
+    wrap.Size             = UDim2.new(1, 0, 0, 58)
     wrap.Parent           = _content
     UILib.addCorner(wrap, 8)
     UILib.addStroke(wrap, 1, _cfg.Stroke, 0.5)
@@ -518,7 +518,7 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     local track            = Instance.new("Frame")
     track.Name = "Track"
     track.Size             = UDim2.new(1, -24, 0, 10)
-    track.Position         = UDim2.new(0, 12, 0, 43)  -- shifted down to stay centred in taller wrap
+    track.Position         = UDim2.new(0, 12, 0, 38)
     track.BackgroundColor3 = _cfg.BG3
     track.BorderSizePixel  = 0
     track.Parent           = wrap
@@ -543,17 +543,6 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
     knob.Parent             = track
     UILib.addCorner(knob, 999)
     UILib.addStroke(knob, 1, _cfg.Accent, 0.2)
-
-    -- Invisible oversized touch target (44px tall — standard mobile tap target size)
-    local touchTarget              = Instance.new("TextButton")
-    touchTarget.Name               = "TouchTarget"
-    touchTarget.Size               = UDim2.new(1, 0, 0, 44)
-    touchTarget.Position           = UDim2.new(0, 0, 0.5, -22)
-    touchTarget.BackgroundTransparency = 1
-    touchTarget.Text               = ""
-    touchTarget.AutoButtonColor    = false
-    touchTarget.ZIndex             = track.ZIndex + 2
-    touchTarget.Parent             = track
 
     local dragging = false
     local cur      = defV
@@ -581,44 +570,17 @@ function UILib.createSlider(labelText, minV, maxV, defV, decimals, onChange)
         setVal(minV + (rel / track.AbsoluteSize.X) * (maxV - minV))
     end
 
-    local function startDrag(x)
-        dragging = true
-        if _content then _content.ScrollingEnabled = false end
-        fromX(x)
-    end
-
-    local function stopDrag()
-        dragging = false
-        if _content then _content.ScrollingEnabled = true end
-    end
-
-    -- Wire up both the track and the oversized touch target
-    for _, target in ipairs({ track, touchTarget }) do
-        target.InputBegan:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1
-            or inp.UserInputType == Enum.UserInputType.Touch then
-                startDrag(inp.Position.X)
-            end
-        end)
-        target.InputEnded:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1
-            or inp.UserInputType == Enum.UserInputType.Touch then
-                stopDrag()
-            end
-        end)
-    end
-
-    _UIS.InputChanged:Connect(function(inp)
-        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
-        or inp.UserInputType == Enum.UserInputType.Touch) then
-            fromX(inp.Position.X)
+    track.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true; fromX(inp.Position.X)
         end
     end)
-
-    -- Safety net: finger lifted anywhere outside the track also ends the drag
-    _UIS.InputEnded:Connect(function(inp)
-        if dragging and inp.UserInputType == Enum.UserInputType.Touch then
-            stopDrag()
+    track.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    _UIS.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            fromX(inp.Position.X)
         end
     end)
 
@@ -1200,79 +1162,28 @@ end
 ---@param window    Frame
 ---@param handle    GuiObject
 ---@param dragSpeed number|nil  lerp speed multiplier (default 8)
---- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
---- Pass isMobile=true to switch to fully offset-based positioning (no scale anchor) and
---- clamp the panel so it can't be dragged off-screen.
-function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
-    local DRAG_SPEED   = dragSpeed or 8
-    local dragging     = false
-    local startPos     = nil   -- window.Position at drag start (always offset after conversion)
-    local startMouse   = nil   -- pointer position at drag start
-    local activeInp    = nil   -- the specific InputObject we are tracking
-    local lastGoalPos  = nil   -- last computed goal UDim2
+function UILib.makeDraggable(window, handle, dragSpeed)
+    local DRAG_SPEED  = dragSpeed or 8
+    local dragging    = false
+    local startPos    = nil   -- window.Position at drag start
+    local lastMousePos = nil  -- mouse position at drag start
+    local lastGoalPos = nil   -- last computed goal UDim2
 
     local function lerp(a, b, m) return a + (b - a) * m end
 
-    local function getInputPos()
-        if activeInp then
-            return Vector2.new(activeInp.Position.X, activeInp.Position.Y)
-        end
-        return _UIS:GetMouseLocation()
-    end
-
-    -- Clamp offset so the panel stays on screen (at least 20px visible on each edge).
-    local function clampGoal(xOff, yOff)
-        if not isMobile then return xOff, yOff end
-        local vp  = game:GetService("Workspace").CurrentCamera.ViewportSize
-        local w   = window.AbsoluteSize.X
-        local h   = window.AbsoluteSize.Y
-        local pad = 20
-        -- On mobile window has AnchorPoint (0.5, 0) so offset is relative to center-top
-        xOff = math.clamp(xOff, -(vp.X / 2 - pad), vp.X / 2 - pad)
-        yOff = math.clamp(yOff, pad, vp.Y - h - pad)
-        return xOff, yOff
-    end
-
+    -- Grab drag start state
     handle.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
-            -- Guard: ensure the input started within the header's own bounds.
-            -- Prevents scroll events from children bubbling up and starting a drag.
-            local ap  = handle.AbsolutePosition
-            local as_ = handle.AbsoluteSize
-            local tx, ty = inp.Position.X, inp.Position.Y
-            if tx < ap.X or tx > ap.X + as_.X or ty < ap.Y or ty > ap.Y + as_.Y then
-                return
-            end
-
-            -- On mobile the panel uses a scale+offset anchor (0.5, 0) for centering.
-            -- Convert to a pure offset position before dragging so the lerp maths work.
-            if isMobile then
-                local abs = window.AbsolutePosition
-                window.AnchorPoint = Vector2.new(0, 0)
-                window.Position    = UDim2.fromOffset(abs.X, abs.Y)
-            end
-
-            dragging    = true
-            activeInp   = inp
-            startPos    = window.Position
-            startMouse  = Vector2.new(inp.Position.X, inp.Position.Y)
-            lastGoalPos = nil
+            dragging      = true
+            startPos      = window.Position
+            lastMousePos  = _UIS:GetMouseLocation()
+            lastGoalPos   = nil
             inp.Changed:Connect(function()
                 if inp.UserInputState == Enum.UserInputState.End then
-                    dragging  = false
-                    activeInp = nil
+                    dragging = false
                 end
             end)
-        end
-    end)
-
-    -- Safety net: some executors/emulators don't fire inp.Changed reliably.
-    _UIS.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1
-        or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging  = false
-            activeInp = nil
         end
     end)
 
@@ -1281,30 +1192,28 @@ function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
         if not startPos then return end
 
         if not dragging and lastGoalPos then
-            local newX = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
-            local newY = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
+            -- Settle: lerp toward goal, snap + stop once close enough
+            local newX  = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
+            local newY  = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
             if math.abs(newX - lastGoalPos.X.Offset) < 0.5 and math.abs(newY - lastGoalPos.Y.Offset) < 0.5 then
                 window.Position = lastGoalPos
                 lastGoalPos     = nil
                 startPos        = nil
-                startMouse      = nil
             else
-                window.Position = UDim2.new(0, newX, 0, newY)
+                window.Position = UDim2.new(startPos.X.Scale, newX, startPos.Y.Scale, newY)
             end
             return
         end
 
-        if dragging and startMouse then
-            local curPos        = getInputPos()
-            local xGoal, yGoal  = clampGoal(
-                startPos.X.Offset + (curPos.X - startMouse.X),
-                startPos.Y.Offset + (curPos.Y - startMouse.Y)
-            )
-            lastGoalPos  = UDim2.new(0, xGoal, 0, yGoal)
+        if dragging and lastMousePos then
+            local delta = lastMousePos - _UIS:GetMouseLocation()
+            local xGoal = startPos.X.Offset - delta.X
+            local yGoal = startPos.Y.Offset - delta.Y
+            lastGoalPos = UDim2.new(startPos.X.Scale, xGoal, startPos.Y.Scale, yGoal)
             window.Position = UDim2.new(
-                0,
+                startPos.X.Scale,
                 lerp(window.Position.X.Offset, xGoal, dt * DRAG_SPEED),
-                0,
+                startPos.Y.Scale,
                 lerp(window.Position.Y.Offset, yGoal, dt * DRAG_SPEED)
             )
         end

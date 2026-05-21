@@ -1199,6 +1199,8 @@ end
 ---@param window    Frame
 ---@param handle    GuiObject
 function UILib.makeDraggable(window, handle)
+    if not window or not handle then return end
+
     local dragging = false
     local startPos = nil
     local startMouse = nil
@@ -1209,12 +1211,12 @@ function UILib.makeDraggable(window, handle)
             return 
         end
 
-        -- Safety check: only start drag if click was actually on the handle
+        -- Strong bounds check
         local ap = handle.AbsolutePosition
         local as = handle.AbsoluteSize
         local pos = inp.Position
 
-        if pos.X < ap.X or pos.X > ap.X + as.X 
+        if not pos or pos.X < ap.X or pos.X > ap.X + as.X 
         or pos.Y < ap.Y or pos.Y > ap.Y + as.Y then
             return
         end
@@ -1224,8 +1226,10 @@ function UILib.makeDraggable(window, handle)
         startMouse = Vector2.new(pos.X, pos.Y)
     end)
 
-    _UIS.InputChanged:Connect(function(inp)   -- Use the library's _UIS
+    _UIS.InputChanged:Connect(function(inp)
         if not dragging then return end
+        if not inp.Position then return end   -- ← Safety fix
+        
         if inp.UserInputType ~= Enum.UserInputType.MouseMovement 
            and inp.UserInputType ~= Enum.UserInputType.Touch then 
             return 

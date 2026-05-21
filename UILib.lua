@@ -1198,9 +1198,7 @@ end
 --- Makes any Frame draggable by its handle (header).
 ---@param window    Frame
 ---@param handle    GuiObject
----@param dragSpeed number|nil   (legacy, ignored)
----@param isMobile  boolean|nil  (legacy, ignored)
-function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
+function UILib.makeDraggable(window, handle)
     if not window or not handle then return end
 
     local dragging = false
@@ -1213,19 +1211,21 @@ function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
             return 
         end
 
+        local pos = inp.Position
+        if not pos then return end
+
         -- Safety bounds check
         local ap = handle.AbsolutePosition
         local as = handle.AbsoluteSize
-        local pos = inp.Position
 
-        if not pos or pos.X < ap.X or pos.X > ap.X + as.X 
+        if pos.X < ap.X or pos.X > ap.X + as.X 
         or pos.Y < ap.Y or pos.Y > ap.Y + as.Y then
             return
         end
 
         dragging = true
         startPos = window.Position
-        startMouse = Vector2.new(pos.X, pos.Y)
+        startMouse = Vector2.new(pos.X, pos.Y)  -- Force Vector2
     end)
 
     _UIS.InputChanged:Connect(function(inp)
@@ -1238,7 +1238,9 @@ function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
         end
 
         local currentPos = inp.Position
-        local delta = currentPos - startMouse
+        -- Convert to Vector2 safely (handles Vector3)
+        local cur = Vector2.new(currentPos.X, currentPos.Y)
+        local delta = cur - startMouse
 
         window.Position = UDim2.new(
             startPos.X.Scale,

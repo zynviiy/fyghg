@@ -1195,65 +1195,78 @@ end
 -- Makes any Frame draggable by an attached header.
 -- ════════════════════════════════════════════════════════════════════
 
---- Makes any Frame draggable by its handle (header).
+--- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
+--- The window glides toward the cursor with momentum and settles smoothly on release.
 ---@param window    Frame
 ---@param handle    GuiObject
-function UILib.makeDraggable(window, handle)
-    if not window or not handle then return end
+---@param dragSpeed number|nil  lerp speed multiplier (default 8)
+function UILib.makeDraggable(window, handle, dragSpeed)
+    local DRAG_SPEED   = dragSpeed or 8
+    local dragging     = false
+    local startPos     = nil   -- window.Position at drag start
+    local startMouse   = nil   -- pointer position at drag start (from the input object itself)
+    local activeInp    = nil   -- the specific InputObject we are tracking
+    local lastGoalPos  = nil   -- last computed goal UDim2
 
-    local dragging = false
-    local startPos = nil
-    local startMouse = nil
+    local function lerp(a, b, m) return a + (b - a) * m end
+
+    -- Returns the current position of the active input object.
+    -- Using inp.Position directly instead of GetMouseLocation() means unrelated
+    -- touch events (e.g. scrolling the content frame) can't pollute the drag.
+    local function getInputPos()
+        if activeInp then
+            return Vector2.new(activeInp.Position.X, activeInp.Position.Y)
+        end
+        return _UIS:GetMouseLocation()
+    end
 
     handle.InputBegan:Connect(function(inp)
-        if inp.UserInputType ~= Enum.UserInputType.MouseButton1 
-           and inp.UserInputType ~= Enum.UserInputType.Touch then 
-            return 
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging    = true
+            activeInp   = inp
+            startPos    = window.Position
+            startMouse  = Vector2.new(inp.Position.X, inp.Position.Y)
+            lastGoalPos = nil
+            inp.Changed:Connect(function()
+                if inp.UserInputState == Enum.UserInputState.End then
+                    dragging  = false
+                    activeInp = nil
+                end
+            end)
         end
+    end)
 
-        local pos = inp.Position
-        if not pos then return end
+    -- Per-frame update: lerp window toward goal
+    game:GetService("RunService").Heartbeat:Connect(function(dt)
+        if not startPos then return end
 
-        -- Safety bounds check
-        local ap = handle.AbsolutePosition
-        local as = handle.AbsoluteSize
-
-        if pos.X < ap.X or pos.X > ap.X + as.X 
-        or pos.Y < ap.Y or pos.Y > ap.Y + as.Y then
+        if not dragging and lastGoalPos then
+            -- Settle: lerp toward goal, snap + stop once close enough
+            local newX = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
+            local newY = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
+            if math.abs(newX - lastGoalPos.X.Offset) < 0.5 and math.abs(newY - lastGoalPos.Y.Offset) < 0.5 then
+                window.Position = lastGoalPos
+                lastGoalPos     = nil
+                startPos        = nil
+                startMouse      = nil
+            else
+                window.Position = UDim2.new(startPos.X.Scale, newX, startPos.Y.Scale, newY)
+            end
             return
         end
 
-        dragging = true
-        startPos = window.Position
-        startMouse = Vector2.new(pos.X, pos.Y)  -- Force Vector2
-    end)
-
-    _UIS.InputChanged:Connect(function(inp)
-        if not dragging then return end
-        if not inp.Position then return end
-
-        if inp.UserInputType ~= Enum.UserInputType.MouseMovement 
-           and inp.UserInputType ~= Enum.UserInputType.Touch then 
-            return 
-        end
-
-        local currentPos = inp.Position
-        -- Convert to Vector2 safely (handles Vector3)
-        local cur = Vector2.new(currentPos.X, currentPos.Y)
-        local delta = cur - startMouse
-
-        window.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-    end)
-
-    _UIS.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 
-        or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+        if dragging and startMouse then
+            local curPos = getInputPos()
+            local xGoal  = startPos.X.Offset + (curPos.X - startMouse.X)
+            local yGoal  = startPos.Y.Offset + (curPos.Y - startMouse.Y)
+            lastGoalPos  = UDim2.new(startPos.X.Scale, xGoal, startPos.Y.Scale, yGoal)
+            window.Position = UDim2.new(
+                startPos.X.Scale,
+                lerp(window.Position.X.Offset, xGoal, dt * DRAG_SPEED),
+                startPos.Y.Scale,
+                lerp(window.Position.Y.Offset, yGoal, dt * DRAG_SPEED)
+            )
         end
     end)
 end

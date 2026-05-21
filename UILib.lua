@@ -1195,47 +1195,44 @@ end
 -- Makes any Frame draggable by an attached header.
 -- ════════════════════════════════════════════════════════════════════
 
---- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
---- The window glides toward the cursor with momentum and settles smoothly on release.
+--- Makes any Frame draggable by its handle (header).
 ---@param window    Frame
 ---@param handle    GuiObject
----@param dragSpeed number|nil  lerp speed multiplier (default 8)
-function UILib.makeDraggable(window, handle, dragSpeed)
+function UILib.makeDraggable(window, handle)
     local dragging = false
-    local startPos, startMouse
+    local startPos = nil
+    local startMouse = nil
 
     handle.InputBegan:Connect(function(inp)
         if inp.UserInputType ~= Enum.UserInputType.MouseButton1 
-           and inp.UserInputType ~= Enum.UserInputType.Touch then return end
+           and inp.UserInputType ~= Enum.UserInputType.Touch then 
+            return 
+        end
 
-        -- Bounds check for touch safety
+        -- Safety check: only start drag if click was actually on the handle
         local ap = handle.AbsolutePosition
         local as = handle.AbsoluteSize
-        if inp.Position.X < ap.X or inp.Position.X > ap.X + as.X 
-        or inp.Position.Y < ap.Y or inp.Position.Y > ap.Y + as.Y then
+        local pos = inp.Position
+
+        if pos.X < ap.X or pos.X > ap.X + as.X 
+        or pos.Y < ap.Y or pos.Y > ap.Y + as.Y then
             return
         end
 
         dragging = true
         startPos = window.Position
-        startMouse = Vector2.new(inp.Position.X, inp.Position.Y)
-
-        local conn
-        conn = inp.Changed:Connect(function()
-            if inp.UserInputState == Enum.UserInputState.End then
-                dragging = false
-                conn:Disconnect()
-            end
-        end)
+        startMouse = Vector2.new(pos.X, pos.Y)
     end)
 
-    game:GetService("UserInputService").InputChanged:Connect(function(inp)
+    _UIS.InputChanged:Connect(function(inp)   -- Use the library's _UIS
         if not dragging then return end
         if inp.UserInputType ~= Enum.UserInputType.MouseMovement 
-           and inp.UserInputType ~= Enum.UserInputType.Touch then return end
+           and inp.UserInputType ~= Enum.UserInputType.Touch then 
+            return 
+        end
 
-        local curPos = inp.Position
-        local delta = curPos - startMouse
+        local currentPos = inp.Position
+        local delta = currentPos - startMouse
 
         window.Position = UDim2.new(
             startPos.X.Scale,
@@ -1243,6 +1240,13 @@ function UILib.makeDraggable(window, handle, dragSpeed)
             startPos.Y.Scale,
             startPos.Y.Offset + delta.Y
         )
+    end)
+
+    _UIS.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
     end)
 end
 

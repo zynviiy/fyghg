@@ -1200,19 +1200,19 @@ end
 ---@param window    Frame
 ---@param handle    GuiObject
 ---@param dragSpeed number|nil  lerp speed multiplier (default 8)
---- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
---- Pass isMobile=true to switch to fully offset-based positioning (no scale anchor) and
---- clamp the panel so it can't be dragged off-screen.
-function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
+function UILib.makeDraggable(window, handle, dragSpeed)
     local DRAG_SPEED   = dragSpeed or 8
     local dragging     = false
-    local startPos     = nil   -- window.Position at drag start (always offset after conversion)
-    local startMouse   = nil   -- pointer position at drag start
+    local startPos     = nil   -- window.Position at drag start
+    local startMouse   = nil   -- pointer position at drag start (from the input object itself)
     local activeInp    = nil   -- the specific InputObject we are tracking
     local lastGoalPos  = nil   -- last computed goal UDim2
 
     local function lerp(a, b, m) return a + (b - a) * m end
 
+    -- Returns the current position of the active input object.
+    -- Using inp.Position directly instead of GetMouseLocation() means unrelated
+    -- touch events (e.g. scrolling the content frame) can't pollute the drag.
     local function getInputPos()
         if activeInp then
             return Vector2.new(activeInp.Position.X, activeInp.Position.Y)
@@ -1220,39 +1220,19 @@ function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
         return _UIS:GetMouseLocation()
     end
 
-    -- Clamp offset so the panel stays on screen (at least 20px visible on each edge).
-    local function clampGoal(xOff, yOff)
-        if not isMobile then return xOff, yOff end
-        local vp  = game:GetService("Workspace").CurrentCamera.ViewportSize
-        local w   = window.AbsoluteSize.X
-        local h   = window.AbsoluteSize.Y
-        local pad = 20
-        -- On mobile window has AnchorPoint (0.5, 0) so offset is relative to center-top
-        xOff = math.clamp(xOff, -(vp.X / 2 - pad), vp.X / 2 - pad)
-        yOff = math.clamp(yOff, pad, vp.Y - h - pad)
-        return xOff, yOff
-    end
-
     handle.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
-            -- Guard: ensure the input started within the header's own bounds.
-            -- Prevents scroll events from children bubbling up and starting a drag.
+            -- Guard: make sure the touch actually landed inside the header's
+            -- own absolute bounds. On mobile, touch events from ScrollingFrame
+            -- children (e.g. the tab bar) bubble up to the header InputBegan
+            -- and incorrectly start a drag of the whole GUI.
             local ap  = handle.AbsolutePosition
             local as_ = handle.AbsoluteSize
             local tx, ty = inp.Position.X, inp.Position.Y
             if tx < ap.X or tx > ap.X + as_.X or ty < ap.Y or ty > ap.Y + as_.Y then
-                return
+                return  -- touch is outside the header — ignore it
             end
-
-            -- On mobile the panel uses a scale+offset anchor (0.5, 0) for centering.
-            -- Convert to a pure offset position before dragging so the lerp maths work.
-            if isMobile then
-                local abs = window.AbsolutePosition
-                window.AnchorPoint = Vector2.new(0, 0)
-                window.Position    = UDim2.fromOffset(abs.X, abs.Y)
-            end
-
             dragging    = true
             activeInp   = inp
             startPos    = window.Position
@@ -1267,7 +1247,8 @@ function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
         end
     end)
 
-    -- Safety net: some executors/emulators don't fire inp.Changed reliably.
+    -- Safety net: some executors/emulators don't fire inp.Changed reliably,
+    -- so also stop dragging on any global InputEnded for the same input type.
     _UIS.InputEnded:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
@@ -1281,6 +1262,7 @@ function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
         if not startPos then return end
 
         if not dragging and lastGoalPos then
+            -- Settle: lerp toward goal, snap + stop once close enough
             local newX = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
             local newY = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
             if math.abs(newX - lastGoalPos.X.Offset) < 0.5 and math.abs(newY - lastGoalPos.Y.Offset) < 0.5 then
@@ -1289,22 +1271,20 @@ function UILib.makeDraggable(window, handle, dragSpeed, isMobile)
                 startPos        = nil
                 startMouse      = nil
             else
-                window.Position = UDim2.new(0, newX, 0, newY)
+                window.Position = UDim2.new(startPos.X.Scale, newX, startPos.Y.Scale, newY)
             end
             return
         end
 
         if dragging and startMouse then
-            local curPos        = getInputPos()
-            local xGoal, yGoal  = clampGoal(
-                startPos.X.Offset + (curPos.X - startMouse.X),
-                startPos.Y.Offset + (curPos.Y - startMouse.Y)
-            )
-            lastGoalPos  = UDim2.new(0, xGoal, 0, yGoal)
+            local curPos = getInputPos()
+            local xGoal  = startPos.X.Offset + (curPos.X - startMouse.X)
+            local yGoal  = startPos.Y.Offset + (curPos.Y - startMouse.Y)
+            lastGoalPos  = UDim2.new(startPos.X.Scale, xGoal, startPos.Y.Scale, yGoal)
             window.Position = UDim2.new(
-                0,
+                startPos.X.Scale,
                 lerp(window.Position.X.Offset, xGoal, dt * DRAG_SPEED),
-                0,
+                startPos.Y.Scale,
                 lerp(window.Position.Y.Offset, yGoal, dt * DRAG_SPEED)
             )
         end

@@ -1164,20 +1164,23 @@ end
 
 --- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
 --- The window glides toward the cursor with momentum and settles smoothly on release.
----@param window    Frame
----@param handle    GuiObject
----@param dragSpeed number|nil  lerp speed multiplier (default 8)
-local UIS = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+---@param window Frame
+---@param handle GuiObject
+---@param dragSpeed number|nil
 function UILib.makeDraggable(window, handle, dragSpeed)
-    local DRAG_SPEED = dragSpeed or 8
-    local dragging = false
-    local dragStartPos
-    local inputStartPos
-    local lastGoalPos
+    local UIS = game:GetService("UserInputService")
+    local RunService = game:GetService("RunService")
 
-    local function lerp(a, b, m)
-        return a + (b - a) * m
+    local DRAG_SPEED = dragSpeed or 8
+
+    local dragging = false
+    local dragInput = nil
+    local dragStart = nil
+    local startPos = nil
+    local goalPos = nil
+
+    local function lerp(a, b, t)
+        return a + (b - a) * t
     end
 
     handle.InputBegan:Connect(function(input)
@@ -1185,9 +1188,9 @@ function UILib.makeDraggable(window, handle, dragSpeed)
         or input.UserInputType == Enum.UserInputType.Touch then
 
             dragging = true
-            dragStartPos = window.Position
-            inputStartPos = input.Position
-            lastGoalPos = nil
+            dragInput = input
+            dragStart = input.Position
+            startPos = window.Position
 
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
@@ -1198,39 +1201,52 @@ function UILib.makeDraggable(window, handle, dragSpeed)
     end)
 
     handle.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch) then
-            inputStartPos = input.Position
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if dragging and input == dragInput then
+            local delta = input.Position - dragStart
+
+            goalPos = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
         end
     end)
 
     RunService.Heartbeat:Connect(function(dt)
-        if not dragStartPos then return end
+        if goalPos then
+            local newX = lerp(
+                window.Position.X.Offset,
+                goalPos.X.Offset,
+                dt * DRAG_SPEED
+            )
 
-        if dragging and inputStartPos then
-            local delta = inputStartPos - input.Position
-            local xGoal = dragStartPos.X.Offset - delta.X
-            local yGoal = dragStartPos.Y.Offset - delta.Y
-
-            lastGoalPos = UDim2.new(dragStartPos.X.Scale, xGoal, dragStartPos.Y.Scale, yGoal)
+            local newY = lerp(
+                window.Position.Y.Offset,
+                goalPos.Y.Offset,
+                dt * DRAG_SPEED
+            )
 
             window.Position = UDim2.new(
-                dragStartPos.X.Scale,
-                lerp(window.Position.X.Offset, xGoal, dt * DRAG_SPEED),
-                dragStartPos.Y.Scale,
-                lerp(window.Position.Y.Offset, yGoal, dt * DRAG_SPEED)
+                startPos.X.Scale,
+                newX,
+                startPos.Y.Scale,
+                newY
             )
-        elseif lastGoalPos then
-            local newX = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
-            local newY = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
 
-            if math.abs(newX - lastGoalPos.X.Offset) < 0.5
-            and math.abs(newY - lastGoalPos.Y.Offset) < 0.5 then
-                window.Position = lastGoalPos
-                lastGoalPos = nil
-                dragStartPos = nil
-            else
-                window.Position = UDim2.new(dragStartPos.X.Scale, newX, dragStartPos.Y.Scale, newY)
+            if not dragging then
+                if math.abs(newX - goalPos.X.Offset) < 0.5
+                and math.abs(newY - goalPos.Y.Offset) < 0.5 then
+                    window.Position = goalPos
+                    goalPos = nil
+                end
             end
         end
     end)

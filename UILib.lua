@@ -1216,7 +1216,7 @@ function UILib.makeDraggable(window, handle, dragSpeed)
 
     -- global move tracking (works even when off the handle)
     UIS.InputChanged:Connect(function(input)
-        if gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.MouseWheel then return end
         if not dragging then return end
         if input.UserInputType == Enum.UserInputType.MouseMovement
         or input.UserInputType == Enum.UserInputType.Touch then

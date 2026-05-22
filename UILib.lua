@@ -1163,27 +1163,32 @@ end
 -- ════════════════════════════════════════════════════════════════════
 
 --- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
---- The window glides toward the cursor with momentum and settles smoothly on release.
+--- Improved mobile support: prevents camera movement while dragging.
 ---@param window    Frame
 ---@param handle    GuiObject
 ---@param dragSpeed number|nil  lerp speed multiplier (default 8)
 function UILib.makeDraggable(window, handle, dragSpeed)
     local DRAG_SPEED  = dragSpeed or 8
     local dragging    = false
-    local startPos    = nil   -- window.Position at drag start
-    local lastMousePos = nil  -- mouse position at drag start
-    local lastGoalPos = nil   -- last computed goal UDim2
+    local startPos    = nil
+    local lastMousePos = nil
+    local lastGoalPos = nil
 
     local function lerp(a, b, m) return a + (b - a) * m end
 
-    -- Grab drag start state
+    -- Main drag handler
     handle.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 
         or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging      = true
-            startPos      = window.Position
-            lastMousePos  = _UIS:GetMouseLocation()
-            lastGoalPos   = nil
+            
+            dragging = true
+            startPos = window.Position
+            lastMousePos = game:GetService("UserInputService"):GetMouseLocation()
+            lastGoalPos = nil
+
+            -- CRITICAL FIX: Consume the input so Roblox doesn't move the camera
+            inp:Capture()  -- This is the key line for mobile
+
             inp.Changed:Connect(function()
                 if inp.UserInputState == Enum.UserInputState.End then
                     dragging = false
@@ -1192,18 +1197,21 @@ function UILib.makeDraggable(window, handle, dragSpeed)
         end
     end)
 
-    -- Per-frame update: lerp window toward goal
+    -- Per-frame update
     game:GetService("RunService").Heartbeat:Connect(function(dt)
         if not startPos then return end
 
+        local UIS = game:GetService("UserInputService")
+
         if not dragging and lastGoalPos then
-            -- Settle: lerp toward goal, snap + stop once close enough
-            local newX  = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
-            local newY  = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
-            if math.abs(newX - lastGoalPos.X.Offset) < 0.5 and math.abs(newY - lastGoalPos.Y.Offset) < 0.5 then
+            -- Smooth settle on release
+            local newX = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
+            local newY = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
+            
+            if math.abs(newX - lastGoalPos.X.Offset) < 1 and math.abs(newY - lastGoalPos.Y.Offset) < 1 then
                 window.Position = lastGoalPos
-                lastGoalPos     = nil
-                startPos        = nil
+                lastGoalPos = nil
+                startPos = nil
             else
                 window.Position = UDim2.new(startPos.X.Scale, newX, startPos.Y.Scale, newY)
             end
@@ -1211,10 +1219,13 @@ function UILib.makeDraggable(window, handle, dragSpeed)
         end
 
         if dragging and lastMousePos then
-            local delta = lastMousePos - _UIS:GetMouseLocation()
+            local currentMouse = UIS:GetMouseLocation()
+            local delta = lastMousePos - currentMouse
+            
             local xGoal = startPos.X.Offset - delta.X
             local yGoal = startPos.Y.Offset - delta.Y
             lastGoalPos = UDim2.new(startPos.X.Scale, xGoal, startPos.Y.Scale, yGoal)
+
             window.Position = UDim2.new(
                 startPos.X.Scale,
                 lerp(window.Position.X.Offset, xGoal, dt * DRAG_SPEED),

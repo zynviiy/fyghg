@@ -1169,16 +1169,19 @@ end
 ---@param dragSpeed number|nil  lerp speed multiplier (default 8)
 function UILib.makeDraggable(window, handle, dragSpeed)
     local DRAG_SPEED = dragSpeed or 8
+
     local dragging = false
     local dragInput = nil
     local dragStart = nil
     local startPos = nil
     local goalPos = nil
 
+    local RunService = game:GetService("RunService")
+
     handle.Active = true
 
     local function lerp(a, b, m)
-        return a + (b - a) * m
+        return a + (b - a) * math.clamp(m, 0, 1)
     end
 
     handle.InputBegan:Connect(function(input)
@@ -1188,30 +1191,41 @@ function UILib.makeDraggable(window, handle, dragSpeed)
             dragInput = input
             dragStart = input.Position
             startPos = window.Position
-            goalPos = nil
+            goalPos = window.Position
 
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
+
+                    if goalPos then
+                        window.Position = goalPos
+                    end
+
                     dragInput = nil
+                    dragStart = nil
+                    startPos = nil
+                    goalPos = nil
                 end
             end)
         end
     end)
 
     handle.InputChanged:Connect(function(input)
-        if dragging and input == dragInput then
-            local delta = input.Position - dragStart
-            goalPos = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
+        if not dragging then return end
+        if input ~= dragInput then return end
+
+        local delta = input.Position - dragStart
+
+        goalPos = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
     end)
 
-    game:GetService("RunService").Heartbeat:Connect(function(dt)
+    RunService.Heartbeat:Connect(function(dt)
+        if not dragging then return end
         if not goalPos then return end
 
         window.Position = UDim2.new(
@@ -1220,14 +1234,6 @@ function UILib.makeDraggable(window, handle, dragSpeed)
             goalPos.Y.Scale,
             lerp(window.Position.Y.Offset, goalPos.Y.Offset, dt * DRAG_SPEED)
         )
-
-        if not dragging then
-            if math.abs(window.Position.X.Offset - goalPos.X.Offset) < 0.5
-            and math.abs(window.Position.Y.Offset - goalPos.Y.Offset) < 0.5 then
-                window.Position = goalPos
-                goalPos = nil
-            end
-        end
     end)
 end
 

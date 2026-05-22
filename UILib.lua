@@ -1164,53 +1164,44 @@ end
 
 --- Wire up smooth lerp-based drag behaviour on `window` using `handle` as the drag target.
 --- The window glides toward the cursor with momentum and settles smoothly on release.
----@param window Frame
----@param handle GuiObject
----@param dragSpeed number|nil
+---@param window    Frame
+---@param handle    GuiObject
+---@param dragSpeed number|nil  lerp speed multiplier (default 8)
 function UILib.makeDraggable(window, handle, dragSpeed)
-    local UIS = game:GetService("UserInputService")
-    local RunService = game:GetService("RunService")
-
     local DRAG_SPEED = dragSpeed or 8
-
     local dragging = false
     local dragInput = nil
     local dragStart = nil
     local startPos = nil
     local goalPos = nil
 
-    local function lerp(a, b, t)
-        return a + (b - a) * t
+    handle.Active = true
+
+    local function lerp(a, b, m)
+        return a + (b - a) * m
     end
 
     handle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
-
             dragging = true
             dragInput = input
             dragStart = input.Position
             startPos = window.Position
+            goalPos = nil
 
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
+                    dragInput = nil
                 end
             end)
         end
     end)
 
     handle.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end)
-
-    UIS.InputChanged:Connect(function(input)
-        if dragging and dragInput and input == dragInput then
+        if dragging and input == dragInput then
             local delta = input.Position - dragStart
-
             goalPos = UDim2.new(
                 startPos.X.Scale,
                 startPos.X.Offset + delta.X,
@@ -1220,33 +1211,21 @@ function UILib.makeDraggable(window, handle, dragSpeed)
         end
     end)
 
-    RunService.Heartbeat:Connect(function(dt)
-        if goalPos then
-            local newX = lerp(
-                window.Position.X.Offset,
-                goalPos.X.Offset,
-                dt * DRAG_SPEED
-            )
+    game:GetService("RunService").Heartbeat:Connect(function(dt)
+        if not goalPos then return end
 
-            local newY = lerp(
-                window.Position.Y.Offset,
-                goalPos.Y.Offset,
-                dt * DRAG_SPEED
-            )
+        window.Position = UDim2.new(
+            goalPos.X.Scale,
+            lerp(window.Position.X.Offset, goalPos.X.Offset, dt * DRAG_SPEED),
+            goalPos.Y.Scale,
+            lerp(window.Position.Y.Offset, goalPos.Y.Offset, dt * DRAG_SPEED)
+        )
 
-            window.Position = UDim2.new(
-                startPos.X.Scale,
-                newX,
-                startPos.Y.Scale,
-                newY
-            )
-
-            if not dragging then
-                if math.abs(newX - goalPos.X.Offset) < 0.5
-                and math.abs(newY - goalPos.Y.Offset) < 0.5 then
-                    window.Position = goalPos
-                    goalPos = nil
-                end
+        if not dragging then
+            if math.abs(window.Position.X.Offset - goalPos.X.Offset) < 0.5
+            and math.abs(window.Position.Y.Offset - goalPos.Y.Offset) < 0.5 then
+                window.Position = goalPos
+                goalPos = nil
             end
         end
     end)

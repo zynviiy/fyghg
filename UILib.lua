@@ -1170,11 +1170,11 @@ end
 function UILib.makeDraggable(window, handle, dragSpeed)
     local DRAG_SPEED = dragSpeed or 8
     local dragging = false
-    local dragInput = nil
     local dragStart = nil
     local startPos = nil
     local goalPos = nil
     local CAS = game:GetService("ContextActionService")
+    local UIS = game:GetService("UserInputService")
     local BLOCK_ACTION = "BlockCameraDrag_" .. handle:GetFullName()
 
     handle.Active = true
@@ -1194,11 +1194,16 @@ function UILib.makeDraggable(window, handle, dragSpeed)
         CAS:UnbindAction(BLOCK_ACTION)
     end
 
+    local function stopDrag()
+        dragging = false
+        dragStart = nil
+        unblockCamera()
+    end
+
     handle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            dragInput = input
             dragStart = input.Position
             startPos = window.Position
             goalPos = nil
@@ -1206,19 +1211,14 @@ function UILib.makeDraggable(window, handle, dragSpeed)
             if input.UserInputType == Enum.UserInputType.Touch then
                 blockCamera()
             end
-
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    dragInput = nil
-                    unblockCamera()
-                end
-            end)
         end
     end)
 
-    handle.InputChanged:Connect(function(input)
-        if dragging and input == dragInput then
+    -- global move tracking (works even when off the handle)
+    UIS.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
             local delta = input.Position - dragStart
             goalPos = UDim2.new(
                 startPos.X.Scale,
@@ -1226,6 +1226,14 @@ function UILib.makeDraggable(window, handle, dragSpeed)
                 startPos.Y.Scale,
                 startPos.Y.Offset + delta.Y
             )
+        end
+    end)
+
+    -- global release tracking (works even when off the handle)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            stopDrag()
         end
     end)
 

@@ -1168,71 +1168,55 @@ end
 ---@param handle    GuiObject
 ---@param dragSpeed number|nil  lerp speed multiplier (default 8)
 function UILib.makeDraggable(window, handle, dragSpeed)
-    local DRAG_SPEED  = dragSpeed or 8
-    local dragging    = false
-    local startPos    = nil
-    local lastMousePos = nil
-    local lastGoalPos = nil
+    local DRAG_SPEED = dragSpeed or 8
+    local dragging = false
+    local startPos = nil
+    local startMousePos = nil
 
-    local function lerp(a, b, m) return a + (b - a) * m end
+    local UIS = game:GetService("UserInputService")
+    local RS = game:GetService("RunService")
 
-    -- Main drag handler
-    handle.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 
-        or inp.UserInputType == Enum.UserInputType.Touch then
+    local function lerp(a, b, t) 
+        return a + (b - a) * t 
+    end
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or 
+           input.UserInputType == Enum.UserInputType.MouseButton1 then
             
             dragging = true
             startPos = window.Position
-            lastMousePos = game:GetService("UserInputService"):GetMouseLocation()
-            lastGoalPos = nil
+            startMousePos = UIS:GetMouseLocation()
+            
+            -- IMPORTANT: Capture input so camera doesn't move
+            input:Capture()
 
-            -- CRITICAL FIX: Consume the input so Roblox doesn't move the camera
-            inp:Capture()  -- This is the key line for mobile
-
-            inp.Changed:Connect(function()
-                if inp.UserInputState == Enum.UserInputState.End then
+            local conn
+            conn = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
+                    conn:Disconnect()
                 end
             end)
         end
     end)
 
-    -- Per-frame update
-    game:GetService("RunService").Heartbeat:Connect(function(dt)
-        if not startPos then return end
+    RS.Heartbeat:Connect(function(dt)
+        if not dragging then return end
 
-        local UIS = game:GetService("UserInputService")
+        local currentMouse = UIS:GetMouseLocation()
+        local delta = startMousePos - currentMouse
 
-        if not dragging and lastGoalPos then
-            -- Smooth settle on release
-            local newX = lerp(window.Position.X.Offset, lastGoalPos.X.Offset, dt * DRAG_SPEED)
-            local newY = lerp(window.Position.Y.Offset, lastGoalPos.Y.Offset, dt * DRAG_SPEED)
-            
-            if math.abs(newX - lastGoalPos.X.Offset) < 1 and math.abs(newY - lastGoalPos.Y.Offset) < 1 then
-                window.Position = lastGoalPos
-                lastGoalPos = nil
-                startPos = nil
-            else
-                window.Position = UDim2.new(startPos.X.Scale, newX, startPos.Y.Scale, newY)
-            end
-            return
-        end
+        local goalX = startPos.X.Offset - delta.X
+        local goalY = startPos.Y.Offset - delta.Y
 
-        if dragging and lastMousePos then
-            local currentMouse = UIS:GetMouseLocation()
-            local delta = lastMousePos - currentMouse
-            
-            local xGoal = startPos.X.Offset - delta.X
-            local yGoal = startPos.Y.Offset - delta.Y
-            lastGoalPos = UDim2.new(startPos.X.Scale, xGoal, startPos.Y.Scale, yGoal)
-
-            window.Position = UDim2.new(
-                startPos.X.Scale,
-                lerp(window.Position.X.Offset, xGoal, dt * DRAG_SPEED),
-                startPos.Y.Scale,
-                lerp(window.Position.Y.Offset, yGoal, dt * DRAG_SPEED)
-            )
-        end
+        -- Apply smooth movement
+        window.Position = UDim2.new(
+            startPos.X.Scale,
+            lerp(window.Position.X.Offset, goalX, dt * DRAG_SPEED),
+            startPos.Y.Scale,
+            lerp(window.Position.Y.Offset, goalY, dt * DRAG_SPEED)
+        )
     end)
 end
 

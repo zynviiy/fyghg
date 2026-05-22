@@ -1208,7 +1208,7 @@ function UILib.makeDraggable(window, handle, dragSpeed)
     end)
 
     UIS.InputChanged:Connect(function(input)
-        if dragging and input == dragInput then
+        if dragging and dragInput and input == dragInput then
             local delta = input.Position - dragStart
 
             goalPos = UDim2.new(
